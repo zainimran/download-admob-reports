@@ -97,7 +97,8 @@ def authenticate():
 
     # Retrieves an authorization code by opening a socket to receive the
     # redirect request and parsing the query parameters set in the URL.
-    code = _get_authorization_code(passthrough_val)
+    # code = _get_authorization_code(passthrough_val)
+    code = input("Enter the code here: ")
 
     # Pass the code back into the OAuth module to get a refresh token.
     flow.fetch_token(code=code)
