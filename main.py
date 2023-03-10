@@ -241,12 +241,19 @@ def generate_network_report(service, backfill=False):
 @functions_framework.cloud_event
 def admob_report_main(cloud_event):
     service = admob_utils.authenticate()
-    # # Print out the data from Pub/Sub, to prove that it worked
-    message = base64.b64decode(cloud_event.data["message"]["data"]).decode() 
-    print("Message: " + message)
+    pub_id_attr = None
+    backfill_attr = None
+    if "attributes" in cloud_event.data["message"] and cloud_event.data["message"]["attributes"]:
+        attr_dic = cloud_event.data["message"]["attributes"]
+        if "backfill" in attr_dic and attr_dic["backfill"]:
+            backfill_attr = attr_dic["backfill"]
+        if "pub_id" in attr_dic and attr_dic["pub_id"]:
+            pub_id_attr = attr_dic["pub_id"]
     backfill = False
-    if (message == 'backfill' or message == 'Backfill' or message == 'BACKFILL'):
+    if (backfill_attr == 'True' or backfill_attr == 'true' or backfill_attr == 'TRUE'):
         backfill = True
+    if pub_id_attr and pub_id_attr != PUBLISHER_ID:
+        return
     generate_network_report(service, backfill)
 
 
