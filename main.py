@@ -18,7 +18,6 @@ from google.cloud import bigquery
 from google.api_core.exceptions import NotFound
 # import json
 from flatten_json import flatten
-import base64
 import functions_framework
 from datetime import datetime, date, timedelta
 import pytz
@@ -27,6 +26,82 @@ import sys
 
 
 PUBLISHER_ID = os.environ.get('PUBLISHER_ID')
+
+
+def list_apps(service):
+    """Lists all apps under an AdMob account.
+
+    Args:
+        service: An AdMob Service Object.
+    """
+
+    data = []
+    next_page_token = ''
+
+    while True:
+        # Execute the request.
+        response = service.accounts().apps().list(
+            pageSize=100,
+            pageToken=next_page_token,
+            parent='accounts/{}'.format(PUBLISHER_ID)).execute()
+
+        # Check if the response is empty.
+        if not response:
+            break
+
+        # Print the result.
+        apps = response['apps']
+        for app in apps:
+            if 'linkedAppInfo' in app and app['platform'] == 'ANDROID':
+                data.append({
+                    'app_id': app['appId'],
+                    'app_store_id': app['linkedAppInfo']['appStoreId'],
+                    'app_store_display_name': app['linkedAppInfo']['displayName'] if 'displayName' in app['linkedAppInfo'] else None,
+
+                })
+
+        if 'nextPageToken' not in response:
+            break
+
+        # Update the next page token.
+        next_page_token = response['nextPageToken']
+    
+    print(data)
+
+    client = bigquery.Client(project=os.environ.get('PROJECT_ID'))
+
+    table_id = f"{os.environ.get('PROJECT_ID')}.admob_reporting_data.list_apps"
+
+    # Check if table exists
+    table_exists = False
+    try:
+        client.get_table(table_id)
+        table_exists = True
+    except NotFound:
+        pass
+
+    # Create table if it doesn't exist
+    if not table_exists:
+        table = bigquery.Table(table_id)
+        table = client.create_table(table)
+        print(f"Table {table.table_id} created.")
+    else:
+        print(f"Table {table_id} already exists.")
+
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True, write_disposition=bigquery.WriteDisposition.WRITE_APPEND)
+
+    job = client.load_table_from_json(
+        data, table_id, job_config=job_config)
+
+    job.result()  # Waits for the job to complete.
+
+    table = client.get_table(table_id)  # Make an API request.
+    print(
+        "{} rows and {} columns in {}".format(
+            table.num_rows, len(table.schema), table_id
+        )
+    )
 
 
 def generate_network_report(service, backfill=False):
@@ -222,16 +297,18 @@ def generate_network_report(service, backfill=False):
         print(f"Table {table_id} already exists.")
 
     job_config = bigquery.LoadJobConfig(
-        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True)
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True, write_disposition=bigquery.WriteDisposition.WRITE_APPEND)
 
     job = client.load_table_from_json(
         data, table_id, job_config=job_config)
+    
+    print('\njob id: ', job.job_id, '\n')
 
     job.result()  # Waits for the job to complete.
 
     table = client.get_table(table_id)  # Make an API request.
     print(
-        "Loaded {} rows and {} columns to {}".format(
+        "{} rows and {} columns in {}".format(
             table.num_rows, len(table.schema), table_id
         )
     )
@@ -250,16 +327,18 @@ def admob_report_main(cloud_event):
         if "pub_id" in attr_dic and attr_dic["pub_id"]:
             pub_id_attr = attr_dic["pub_id"]
     backfill = False
-    if (backfill_attr == 'True' or backfill_attr == 'true' or backfill_attr == 'TRUE'):
-        backfill = True
     if pub_id_attr and pub_id_attr != PUBLISHER_ID:
         return
+    if (backfill_attr == 'True' or backfill_attr == 'true' or backfill_attr == 'TRUE'):
+        backfill = True
+        list_apps(service)
     generate_network_report(service, backfill)
 
 
 if __name__ == "__main__":
     service = admob_utils.authenticate()
     backfill = False
-    if len(sys.argv) - 1:
+    if len(sys.argv) > 1 and sys.argv[1] == '--backfill=true':
         backfill = True
+        list_apps(service)
     generate_network_report(service, backfill)
