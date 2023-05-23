@@ -104,7 +104,7 @@ def list_apps(service):
     )
 
 
-def generate_network_report(service, backfill=False):
+def generate_network_report(service, backfill=False, start_date_year='22', start_date_month='1', start_date_day='1', end_date_year=None, end_date_month=None, end_date_day=None):
     """Generates and prints a network report.
 
     Args:
@@ -158,15 +158,18 @@ def generate_network_report(service, backfill=False):
         num_rows = int(response[-1]['footer']['matchingRowCount'])
         data = response[1:-1]
     else:
-        end_date = datetime_now.date() - timedelta(days=1)
+        if not end_date_year:
+            end_date = datetime_now.date() - timedelta(days=1)
+        else:
+            end_date = date(int('20' + end_date_year), int(end_date_month), int(end_date_day))
 
         # if the cloud scheduler is still going to run for yesterday at 02:00, then start the backfill from the day before yesterday (two days ago)
         cloud_scheduler_time = datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=2, minute=0, tzinfo=tz)
-        if datetime_now < cloud_scheduler_time: 
+        if datetime_now < cloud_scheduler_time and not end_date_year:
             end_date = datetime_now.date() - timedelta(days=2)
 
-        if (os.environ.get('START_DATE_YEAR') and os.environ.get('START_DATE_MONTH') and os.environ.get('START_DATE_DAY')):
-            start_date = date(int('20' + os.environ.get('START_DATE_YEAR')), int(os.environ.get('START_DATE_MONTH')), int(os.environ.get('START_DATE_DAY')))
+        if (start_date_year and start_date_month and start_date_day):
+            start_date = date(int('20' + start_date_year), int(start_date_month), int(start_date_day))
         else:
             return
 
@@ -216,7 +219,7 @@ def generate_network_report(service, backfill=False):
         offset = 0
         while True:
             # Calculate the start and end dates for the current batch
-            batch_start_date = start_date + timedelta(days=offset - 1)
+            batch_start_date = start_date + timedelta(days=max(offset - 1, 0))
             batch_end_date = min(batch_start_date + timedelta(days=batch_size - 1), end_date)
             
             # Make the API request for the current batch
@@ -301,7 +304,7 @@ def generate_network_report(service, backfill=False):
 
     job = client.load_table_from_json(
         data, table_id, job_config=job_config)
-    
+
     print('\njob id: ', job.job_id, '\n')
 
     job.result()  # Waits for the job to complete.
@@ -320,19 +323,37 @@ def admob_report_main(cloud_event):
     service = admob_utils.authenticate()
     pub_id_attr = None
     backfill_attr = None
+    start_date_year_attr = '22'
+    start_date_month_attr = '1'
+    start_date_day_attr = '1'
+    end_date_year_attr = None
+    end_date_month_attr = None
+    end_date_day_attr = None
     if "attributes" in cloud_event.data["message"] and cloud_event.data["message"]["attributes"]:
         attr_dic = cloud_event.data["message"]["attributes"]
         if "backfill" in attr_dic and attr_dic["backfill"]:
             backfill_attr = attr_dic["backfill"]
         if "pub_id" in attr_dic and attr_dic["pub_id"]:
             pub_id_attr = attr_dic["pub_id"]
+        if "start_date_year" in attr_dic and attr_dic["start_date_year"]:
+            start_date_year_attr = attr_dic["start_date_year"]
+        if "start_date_month" in attr_dic and attr_dic["start_date_month"]:
+            start_date_month_attr = attr_dic["start_date_month"]
+        if "start_date_day" in attr_dic and attr_dic["start_date_day"]:
+            start_date_day_attr = attr_dic["start_date_day"]
+        if "end_date_year" in attr_dic and attr_dic["end_date_year"]:
+            end_date_year_attr = attr_dic["end_date_year"]
+        if "end_date_month" in attr_dic and attr_dic["end_date_month"]:
+            end_date_month_attr = attr_dic["end_date_month"]
+        if "end_date_day" in attr_dic and attr_dic["end_date_day"]:
+            end_date_day_attr = attr_dic["end_date_day"]
     backfill = False
     if pub_id_attr and pub_id_attr != PUBLISHER_ID:
         return
     if (backfill_attr == 'True' or backfill_attr == 'true' or backfill_attr == 'TRUE'):
         backfill = True
-        # list_apps(service)
-    generate_network_report(service, backfill)
+        list_apps(service)
+    generate_network_report(service, backfill, start_date_year_attr, start_date_month_attr, start_date_day_attr, end_date_year_attr, end_date_month_attr, end_date_day_attr)
 
 
 if __name__ == "__main__":
