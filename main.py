@@ -331,7 +331,7 @@ def admob_report_main(cloud_event):
         return
     if (backfill_attr == 'True' or backfill_attr == 'true' or backfill_attr == 'TRUE'):
         backfill = True
-        list_apps(service)
+        # list_apps(service)
     generate_network_report(service, backfill)
 
 
