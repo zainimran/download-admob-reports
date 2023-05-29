@@ -335,10 +335,13 @@ def admob_report_main(cloud_event):
     end_date_year_attr = None
     end_date_month_attr = None
     end_date_day_attr = None
+    populate_apps_list_attr = None
     if "attributes" in cloud_event.data["message"] and cloud_event.data["message"]["attributes"]:
         attr_dic = cloud_event.data["message"]["attributes"]
         if "backfill" in attr_dic and attr_dic["backfill"]:
             backfill_attr = attr_dic["backfill"]
+        if "populate_apps_list" in attr_dic and attr_dic["populate_apps_list"]:
+            populate_apps_list_attr = attr_dic["populate_apps_list"]
         if "pub_id" in attr_dic and attr_dic["pub_id"]:
             pub_id_attr = attr_dic["pub_id"]
         if "start_date_year" in attr_dic and attr_dic["start_date_year"]:
@@ -358,6 +361,7 @@ def admob_report_main(cloud_event):
         return
     if (backfill_attr == 'True' or backfill_attr == 'true' or backfill_attr == 'TRUE'):
         backfill = True
+    if (populate_apps_list_attr == 'True' or populate_apps_list_attr == 'true' or populate_apps_list_attr == 'TRUE'):
         list_apps(service)
     generate_network_report(service, backfill, start_date_year_attr, start_date_month_attr, start_date_day_attr, end_date_year_attr, end_date_month_attr, end_date_day_attr)
 
