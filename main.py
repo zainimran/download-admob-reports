@@ -23,6 +23,7 @@ from datetime import datetime, date, timedelta
 import pytz
 import os
 import sys
+import time
 
 
 PUBLISHER_ID = os.environ.get('PUBLISHER_ID')
@@ -302,12 +303,17 @@ def generate_network_report(service, backfill=False, start_date_year='22', start
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True, write_disposition=bigquery.WriteDisposition.WRITE_APPEND)
 
-    job = client.load_table_from_json(
-        data, table_id, job_config=job_config)
-
-    print('\njob id: ', job.job_id, '\n')
-
-    job.result()  # Waits for the job to complete.
+    # max retries for load job = 5
+    for i in range(5):
+        try:
+            job = client.load_table_from_json(
+                data, table_id, job_config=job_config)
+            print('\njob id: ', job.job_id, '\n')
+            job.result()  # Waits for the job to complete.
+            break
+        except Exception as e:
+            print(f"Error loading job: {e}")
+            time.sleep(10 * (2 ** i)) # retry delay = 10
 
     table = client.get_table(table_id)  # Make an API request.
     print(
