@@ -261,7 +261,7 @@ def generate_network_report(service, backfill=False, start_date_year='2022', sta
                 break
         
 
-    # Flatten the json and filter out empty country rows.
+    # Flatten the json and map empty countries to 'Unknown Region' and format date in yyyy-mm-dd format.
     idx = 0
     data_length = len(data)
     while idx < data_length:
@@ -269,7 +269,11 @@ def generate_network_report(service, backfill=False, start_date_year='2022', sta
         if 'dimensionValues_COUNTRY' in data[idx]: # after flattening the data json, dimensionValues_COUNTRY will only exist if dimensionValues_COUNTRY_value does not exist            
             data[idx].pop('dimensionValues_COUNTRY')
             data[idx]['dimensionValues_COUNTRY_value'] = 'Unknown Region'
-        
+        if 'dimensionValues_DATE_value' in data[idx]:
+            date_string = data[idx]['dimensionValues_DATE_value']
+            year, month, day = int(date_string[:4]), int(date_string[4:6]), int(date_string[6:])
+            date = datetime(year, month, day)
+            data[idx]['dimensionValues_DATE_value'] = date.strftime("%Y-%m-%d")
         idx += 1
 
     # # Test out by saving the data to a local json file.
