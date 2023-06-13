@@ -162,7 +162,7 @@ def generate_network_report(service, backfill=False, start_date_year='2022', sta
         if not end_date_year:
             end_date = datetime_now.date() - timedelta(days=1)
         else:
-            end_date = datetime.date(int(end_date_year), int(end_date_month), int(end_date_day))
+            end_date = datetime(year=int(end_date_year), month=int(end_date_month), day=int(end_date_day)).date()
 
         # if the cloud scheduler is still going to run for yesterday at 02:00, then start the backfill from the day before yesterday (two days ago)
         cloud_scheduler_time = datetime(year=datetime_now.year, month=datetime_now.month, day=datetime_now.day, hour=2, minute=0, tzinfo=tz)
@@ -170,7 +170,7 @@ def generate_network_report(service, backfill=False, start_date_year='2022', sta
             end_date = datetime_now.date() - timedelta(days=2)
 
         if (start_date_year and start_date_month and start_date_day):
-            start_date = datetime.date(int(start_date_year), int(start_date_month), int(start_date_day))
+            start_date = datetime(year=int(start_date_year), month=int(start_date_month), day=int(start_date_day)).date()
         else:
             return
 
