@@ -1,2 +1,3 @@
 .venv
 token.pickle
+.DS_Store
