@@ -68,10 +68,14 @@ def list_apps(service, dry_run=False):
         next_page_token = response['nextPageToken']
     
     if dry_run:
-        # Test out by saving the data to a local json file.
-        json_string = json.dumps(data)
-        with open('apps_list.json', 'w') as outfile:
-            outfile.write(json_string)
+        try:
+            # Test out by saving the data to a local json file.
+            json_string = json.dumps(data)
+            with open('apps_list.json', 'w') as outfile:
+                outfile.write(json_string)
+            print("dry run complete (local machine)")
+        except Exception:
+            print("dry run complete (cloud function)")
     else:
         client = bigquery.Client(project=os.environ.get('PROJECT_ID'))
 
@@ -284,10 +288,14 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
         idx += 1
 
     if dry_run:
-        # Test out by saving the data to a local json file.
-        json_string = json.dumps(data)
-        with open('admob_reports.json', 'w') as outfile:
-            outfile.write(json_string)
+        try:
+            # Test out by saving the data to a local json file.
+            json_string = json.dumps(data)
+            with open('admob_reports.json', 'w') as outfile:
+                outfile.write(json_string)
+            print("dry run complete (local machine)")
+        except Exception:
+            print("dry run complete (cloud function)")
     else:
         # Construct a BigQuery client object.
         # TODO(developer): Set project to the project ID where the BigQuery table is located.
