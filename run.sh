@@ -10,7 +10,7 @@ source .venv/bin/activate
 pip3 install -r requirements.txt
 
 # run main script
-python3 main.py
+python3 main.py --generate-token-only=true
 
 # deactivate the virtual environment
 deactivate

@@ -397,7 +397,9 @@ if __name__ == "__main__":
     start_date_day = '1'
     end_date_year = None
     end_date_month = None
-    end_date_day = None
+    end_date_day = None    
+    if len(sys.argv) > 1 and '--generate-token-only=true' in sys.argv:
+        exit()
     if len(sys.argv) > 1 and (sys.argv[1] == '--backfill=true' or sys.argv[1] == '--backfill=custom'):
         backfill = True
     if len(sys.argv) > 1 and '--apps-list=true' in sys.argv:
