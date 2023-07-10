@@ -39,7 +39,8 @@ API_SCOPE = "https://www.googleapis.com/auth/admob.readonly"
 
 # Store refresh tokens in a local disk file. This file contains sensitive
 # authorization information.
-TOKEN_FILE = 'token.pickle'
+PUBLISHER_ID = os.environ.get('PUBLISHER_ID')
+TOKEN_FILE = f"token {PUBLISHER_ID}.pickle"
 
 
 def load_user_credentials():
