@@ -19,12 +19,13 @@ from google.api_core.exceptions import NotFound
 import json
 from flatten_json import flatten
 import functions_framework
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import pytz
 import os
 import sys
 import time
 import logging
+import os
 
 
 PUBLISHER_ID = os.environ.get('PUBLISHER_ID')
@@ -36,6 +37,7 @@ def list_apps(service, dry_run=False):
     Args:
         service: An AdMob Service Object.
     """
+    print('Generating apps list for ', PUBLISHER_ID)
 
     data = []
     next_page_token = ''
@@ -71,15 +73,32 @@ def list_apps(service, dry_run=False):
         try:
             # Test out by saving the data to a local json file.
             json_string = json.dumps(data)
-            with open('apps_list.json', 'w') as outfile:
+            with open(f'apps_list {PUBLISHER_ID}.json', 'w') as outfile:
                 outfile.write(json_string)
-            print("dry run complete (local machine)")
+            print("dry run complete (local machine) \n")
         except Exception:
-            print("dry run complete (cloud function)")
+            print("dry run complete (cloud function) \n")
     else:
-        client = bigquery.Client(project=os.environ.get('PROJECT_ID'))
+        client = bigquery.Client(project=os.environ.get('GCP_PROJECT'))
 
-        table_id = f"{os.environ.get('PROJECT_ID')}.admob_reporting_data.list_apps"
+        dataset_id = "admob_reporting_data"
+
+        # Check if the dataset already exists
+        dataset_exists = False
+        try:
+            client.get_dataset(dataset_id)
+            dataset_exists = True
+        except NotFound:
+            pass
+
+        if not dataset_exists:
+            # The dataset does not exist, so create it
+            dataset = client.create_dataset(dataset_id)
+            print(f"Dataset {dataset.dataset_id} created.")
+        else:
+            print(f"Dataset {dataset_id} already exists.")
+
+        table_id = f"{os.environ.get('GCP_PROJECT')}.{dataset_id}.list_apps"
 
         # Check if table exists
         table_exists = False
@@ -119,11 +138,21 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
     Args:
       service: An AdMob Service Object.
       backfill: A Boolean flag to indicate whether to backfill data or not.
+      dry_run: A Boolean flag to indicate whether to run the function in dry-run mode.
+      populate_apps_list: A Boolean flag to indicate whether to call the `list_apps()` function.
+      start_date_year: The year of the start date.
+      start_date_month: The month of the start date.
+      start_date_day: The day of the start date.
+      end_date_year: The year of the end date (optional).
+      end_date_month: The month of the end date (optional).
+      end_date_day: The day of the end date (optional).
     """
     # Set date range. AdMob API only supports the account default timezone and
     # "America/Los_Angeles", see
     # https://developers.google.com/admob/api/v1/reference/rest/v1/accounts.networkReport/generate
     # for more information.
+    print('Generating network report for ', PUBLISHER_ID)
+
     tz = pytz.timezone('America/Los_Angeles')
     datetime_now = datetime.now(tz)
 
@@ -131,11 +160,13 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
     dimensions = ['DATE', 'APP', 'COUNTRY']
 
     # Set metrics.
-    metrics = ['ESTIMATED_EARNINGS', 'IMPRESSION_RPM', 'AD_REQUESTS', 'MATCH_RATE',
-            'MATCHED_REQUESTS', 'SHOW_RATE', 'IMPRESSIONS', 'IMPRESSION_CTR', 'CLICKS']
+    metrics = ['ESTIMATED_EARNINGS', 'IMPRESSIONS']
 
     # Set sort conditions.
     sort_conditions = {'dimension': 'DATE', 'order': 'ASCENDING'}
+
+    # Set dimension metrics.
+    dimension_filters = {'dimension': 'PLATFORM', 'matchesAny': {'values': ['Android']}}
 
     data = []
 
@@ -154,6 +185,7 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             'dimensions': dimensions,
             'metrics': metrics,
             'sort_conditions': [sort_conditions],
+            'dimension_filters': [dimension_filters],
             'localization_settings': {'currency_code': 'USD'},
         }
 
@@ -164,6 +196,10 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
         response = service.accounts().networkReport().generate(
             parent='accounts/{}'.format(PUBLISHER_ID), body=request).execute()
         
+        if 'matchingRowCount' not in response[-1]['footer']:
+            print('Warning: This account does not contain any records for this dates \n')
+            return
+
         num_rows = int(response[-1]['footer']['matchingRowCount'])
         data = response[1:-1]
     else:
@@ -212,6 +248,10 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             response = service.accounts().networkReport().generate(
                 parent='accounts/{}'.format(PUBLISHER_ID), body=request).execute()
 
+            if 'matchingRowCount' not in response[-1]['footer']:
+                print('Warning: This account does not contain any records for this dates \n')
+                return
+            
             # If the total number of records in the response is less than 80k (record retrieval limit is 100k), try a larger batch size; otherwise, try a smaller batch size
             num_rows = int(response[-1]['footer']['matchingRowCount'])
             if num_rows < 80000:
@@ -221,7 +261,7 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
 
         # The optimal batch size is the largest batch size that returns less than 80k rows 
         batch_size = right
-        print('batch_size: ', batch_size, '\n')
+        print('batch_size in days: ', batch_size)
 
         # Loop through each batch of data, adjusting the date range as needed
         offset = 0
@@ -253,12 +293,13 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             response = service.accounts().networkReport().generate(
                 parent='accounts/{}'.format(PUBLISHER_ID), body=request).execute()
 
+
             num_rows = int(response[-1]['footer']['matchingRowCount'])
-            print('batch num_rows: ', num_rows, '\n')
+            print('batch num_rows: ', num_rows)
             if num_rows > 100000:
                 logging.warning('Report not fully retrieved from the AdMob API due to number of rows in response exceeding 100k')
                 batch_size -= 2 # decrease batch size aggresively until we don't hit the record retrieval limit on the API
-                print('new batch_size: ', batch_size, '\n')
+                print('new batch_size in days: ', batch_size)
                 continue
 
             # Append the data from the current batch to the overall data list
@@ -285,24 +326,43 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             year, month, day = int(date_string[:4]), int(date_string[4:6]), int(date_string[6:])
             date = datetime(year, month, day)
             data[idx]['dimensionValues_DATE_value'] = date.strftime("%Y-%m-%d")
+        if 'metricValues_IMPRESSIONS_integerValue' in data[idx] and data[idx]['metricValues_IMPRESSIONS_integerValue'] == 0  and 'metricValues_ESTIMATED_EARNINGS_microsValue' in data[idx] and data[idx]['metricValues_ESTIMATED_EARNINGS_microsValue'] == 0:
+            del data[idx]
+            data_length -= 1
+            idx -= 1
         idx += 1
 
     if dry_run:
         try:
             # Test out by saving the data to a local json file.
             json_string = json.dumps(data)
-            with open('admob_reports.json', 'w') as outfile:
+            with open(f'admob_reports {PUBLISHER_ID}.json', 'w') as outfile:
                 outfile.write(json_string)
-            print("dry run complete (local machine)")
+            print("dry run complete (local machine) \n")
         except Exception:
-            print("dry run complete (cloud function)")
+            print("dry run complete (cloud function) \n")
     else:
         # Construct a BigQuery client object.
-        # TODO(developer): Set project to the project ID where the BigQuery table is located.
-        client = bigquery.Client(project=os.environ.get('PROJECT_ID'))
+        client = bigquery.Client(project=os.environ.get('GCP_PROJECT'))
 
-        # TODO(developer): Set table_id to the ID of the table to create.
-        table_id = os.environ.get('TABLE_ID')
+        dataset_id = "admob_reporting_data"
+
+        # Check if the dataset already exists
+        dataset_exists = False
+        try:
+            client.get_dataset(dataset_id)
+            dataset_exists = True
+        except NotFound:
+            pass
+
+        if not dataset_exists:
+            # The dataset does not exist, so create it
+            dataset = client.create_dataset(dataset_id)
+            print(f"Dataset {dataset.dataset_id} created.")
+        else:
+            print(f"Dataset {dataset_id} already exists.")
+
+        table_id = f"{os.environ.get('GCP_PROJECT')}.{dataset_id}.admob_network_report"
 
         # Check if table exists
         table_exists = False
@@ -314,8 +374,24 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
 
         # Create table if it doesn't exist
         if not table_exists:
-            table = bigquery.Table(table_id)
+            # Create a schema
+            schema = [
+                bigquery.SchemaField("dimensionValues_DATE_value", 'DATE', mode="NULLABLE"),
+                bigquery.SchemaField("dimensionValues_COUNTRY_value", 'STRING', mode="NULLABLE"),
+                bigquery.SchemaField("dimensionValues_APP_value", 'STRING', mode="NULLABLE"),
+                bigquery.SchemaField("dimensionValues_APP_displayLabel", 'STRING', mode="NULLABLE"),
+                bigquery.SchemaField("metricValues_ESTIMATED_EARNINGS_microsValue", 'INTEGER', mode="NULLABLE"),
+                bigquery.SchemaField("metricValues_IMPRESSIONS_integerValue", 'INTEGER', mode="NULLABLE"),
+            ]
+            table = bigquery.Table(table_id, schema=schema)
             table = client.create_table(table)
+            table.time_partitioning = bigquery.TimePartitioning(
+                type_=bigquery.TimePartitioningType.DAY,
+                field="dimensionValues_DATE_value",  # name of column to use for partitioning
+            )
+            # Enable "require where clause to query data"
+            table.require_partition_filter = True
+            table.clustering_fields = ["dimensionValues_APP_value", "dimensionValues_COUNTRY_value"]
             print(f"Table {table.table_id} created.")
         else:
             print(f"Table {table_id} already exists.")
@@ -328,7 +404,7 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             try:
                 job = client.load_table_from_json(
                     data, table_id, job_config=job_config)
-                print('\njob id: ', job.job_id, '\n')
+                print('job id: ', job.job_id)
                 job.result()  # Waits for the job to complete.
                 break
             except Exception as e:
@@ -337,79 +413,167 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
 
         table = client.get_table(table_id)  # Make an API request.
         print(
-            "{} rows and {} columns in {}".format(
+            "{} rows and {} columns in {} \n".format(
                 table.num_rows, len(table.schema), table_id
             )
         )
 
 
+"""
+This function generates a network report for Admob.
+
+Args:
+    cloud_event: The Cloud Event that triggered the function.
+
+Raises:
+    ValueError: If the start date is after the end date.
+
+**Pub/Sub message attributes:**
+
+* `backfill`: Whether to generate a backfill report.
+* `dry_run`: Whether to run the function in dry-run mode.
+* `populate_apps_list`: Whether to call the `list_apps()` function.
+* `pub_id`: The publisher ID for the Admob account.
+* `start_date_year`: The year of the start date.
+* `start_date_month`: The month of the start date.
+* `start_date_day`: The day of the start date.
+* `end_date_year`: The year of the end date (optional).
+* `end_date_month`: The month of the end date (optional).
+* `end_date_day`: The day of the end date (optional).
+
+"""
 # Triggered from a message on a Cloud Pub/Sub topic.
 @functions_framework.cloud_event
 def admob_report_main(cloud_event):
-    service = admob_utils.authenticate()
-    pub_id = None
-    backfill = False
-    dry_run = False
-    start_date_year = '2022'
-    start_date_month = '1'
-    start_date_day = '1'
-    end_date_year = None
-    end_date_month = None
-    end_date_day = None
-    populate_apps_list = None
-    if "attributes" in cloud_event.data["message"] and cloud_event.data["message"]["attributes"]:
-        attr_dic = cloud_event.data["message"]["attributes"]
-        if "backfill" in attr_dic and attr_dic["backfill"]:
-            backfill = attr_dic["backfill"]
-        if "dry_run" in attr_dic and attr_dic["dry_run"]:
-            dry_run = attr_dic["dry_run"]
-        if "populate_apps_list" in attr_dic and attr_dic["populate_apps_list"]:
-            populate_apps_list = attr_dic["populate_apps_list"]
-        if "pub_id" in attr_dic and attr_dic["pub_id"]:
-            pub_id = attr_dic["pub_id"]
-        if "start_date_year" in attr_dic and attr_dic["start_date_year"]:
-            start_date_year = attr_dic["start_date_year"]
-        if "start_date_month" in attr_dic and attr_dic["start_date_month"]:
-            start_date_month = attr_dic["start_date_month"]
-        if "start_date_day" in attr_dic and attr_dic["start_date_day"]:
-            start_date_day = attr_dic["start_date_day"]
-        if "end_date_year" in attr_dic and attr_dic["end_date_year"]:
-            end_date_year = attr_dic["end_date_year"]
-        if "end_date_month" in attr_dic and attr_dic["end_date_month"]:
-            end_date_month = attr_dic["end_date_month"]
-        if "end_date_day" in attr_dic and attr_dic["end_date_day"]:
-            end_date_day = attr_dic["end_date_day"]
-    if pub_id and pub_id != PUBLISHER_ID:
-        return
-    if (backfill == 'True' or backfill == 'true' or backfill == 'TRUE'):
-        backfill = True
-    if (populate_apps_list == 'True' or populate_apps_list == 'true' or populate_apps_list == 'TRUE'):
-        list_apps(service, dry_run)
-    generate_network_report(service, backfill, dry_run, start_date_year, start_date_month, start_date_day, end_date_year, end_date_month, end_date_day)
+    token_files = admob_utils.list_files_with_prefix('token')
+    for token_f in token_files:
+        global PUBLISHER_ID
+        PUBLISHER_ID = admob_utils.extract_publisher_id(token_f)
+        service = admob_utils.authenticate(token_f)
+        pub_id = None
+        backfill = False
+        dry_run = False
+        populate_apps_list = False
+        start_date_year = '2022'
+        start_date_month = '1'
+        start_date_day = '1'
+        end_date_year = None
+        end_date_month = None
+        end_date_day = None
+
+        # Get the attributes from the Cloud Event.
+        if "attributes" in cloud_event.data["message"]:
+            attr_dic = cloud_event.data["message"]["attributes"]
+
+            if "backfill" in attr_dic:
+                backfill = attr_dic["backfill"]
+            if "dry_run" in attr_dic:
+                dry_run = attr_dic["dry_run"]
+            if "populate_apps_list" in attr_dic:
+                populate_apps_list = attr_dic["populate_apps_list"]
+            if "pub_id" in attr_dic:
+                pub_id = attr_dic["pub_id"]
+            if "start_date" in attr_dic:
+                start_date_year, start_date_month, start_date_day = attr_dic["start_date"].split('-')
+            if "end_date" in attr_dic:
+                end_date_year, end_date_month, end_date_day = attr_dic["end_date"].split('-')
+
+        # Check if the publisher ID in the Cloud Event matches the current publisher ID.
+        if pub_id and pub_id != PUBLISHER_ID:
+            return
+
+        # Check if backfill is enabled.
+        if backfill == 'True' or backfill == 'true' or backfill == 'TRUE':
+            backfill = True
+
+        # Check if list_apps should be called.
+        if populate_apps_list == 'True' or populate_apps_list == 'true' or populate_apps_list == 'TRUE':
+            list_apps(service, dry_run)
+
+        # Check if the start date is after the end date.
+        if end_date_year:
+            start_date = date(int(start_date_year), int(start_date_month), int(start_date_day))
+            end_date = date(int(end_date_year), int(end_date_month), int(end_date_day))
+            if start_date > end_date:
+                raise ValueError("Start date must be before end date.")
+        
+        # Generate the network report.
+        generate_network_report(service, backfill, dry_run, start_date_year, start_date_month, start_date_day, end_date_year, end_date_month, end_date_day)
 
 
+"""
+This script generates a network report for Admob.
+
+Important variables:
+
+    token_files: A list of files containing Admob tokens.
+    PUBLISHER_ID: The publisher ID for the Admob account.
+    service: The Admob service object.
+    backfill: Whether to generate a backfill report.
+    dry_run: Whether to run the script in dry-run mode.
+    start_date_year: The year of the start date (optional).
+    start_date_month: The month of the start date (optional).
+    start_date_day: The day of the start date (optional).
+    end_date_year: The year of the end date (optional - required if backfill=custom).
+    end_date_month: The month of the end date (optional - required if backfill=custom).
+    end_date_day: The day of the end date (optional - required if backfill=custom).
+
+Raises:
+    ValueError: If the start date is after the end date.
+
+Command line flags:
+
+    --generate-token-only: Only generate the Admob token file.
+    --apps-list: List and store list of all apps for the Admob account.
+    --dry-run: Run the script in dry-run mode.
+    --backfill: Do a backfill for the AdMob data.
+"""
 if __name__ == "__main__":
-    service = admob_utils.authenticate()
-    backfill = False
-    dry_run = True
-    start_date_year = '2022'
-    start_date_month = '1'
-    start_date_day = '1'
-    end_date_year = None
-    end_date_month = None
-    end_date_day = None    
-    if len(sys.argv) > 1 and '--generate-token-only=true' in sys.argv:
-        exit()
-    if len(sys.argv) > 1 and (sys.argv[1] == '--backfill=true' or sys.argv[1] == '--backfill=custom'):
-        backfill = True
-    if len(sys.argv) > 1 and '--apps-list=true' in sys.argv:
-        list_apps(service, dry_run)
-    if "START_DATE_YEAR" in os.environ:
-        start_date_year = os.environ.get('START_DATE_YEAR')
-        start_date_month = os.environ.get('START_DATE_MONTH')
-        start_date_day = os.environ.get('START_DATE_DAY')
-    if len(sys.argv) > 1 and sys.argv[1] == '--backfill=custom':
-        end_date_year = os.environ.get('END_DATE_YEAR')
-        end_date_month = os.environ.get('END_DATE_MONTH')
-        end_date_day = os.environ.get('END_DATE_DAY')
-    generate_network_report(service, backfill, dry_run, start_date_year, start_date_month, start_date_day, end_date_year, end_date_month, end_date_day)
+    token_files = admob_utils.list_files_with_prefix('token')
+    for token_f in token_files:
+        PUBLISHER_ID = admob_utils.extract_publisher_id(token_f)
+        
+        # if there is a pub id passed in the command line and that pub id doesn't match the loop's current pub id, then skip that loop instance
+        if len(sys.argv) > 1 and 'pub' in sys.argv[1] and sys.argv[1] != PUBLISHER_ID:
+            continue
+
+        service = admob_utils.authenticate(token_f)
+        backfill = False
+        dry_run = True
+        start_date_year = '2022'
+        start_date_month = '1'
+        start_date_day = '1'
+        end_date_year = None
+        end_date_month = None
+        end_date_day = None
+
+        # Check if we only need to generate the AdMob refresh token 
+        if len(sys.argv) > 1 and '--generate-token-only=true' in sys.argv:
+            exit()
+
+        # Check if it's not a dry run
+        if len(sys.argv) > 1 and '--dry-run=false' in sys.argv:
+            dry_run = False
+        
+        # Check if list_apps should be called.
+        if len(sys.argv) > 1 and '--apps-list=true' in sys.argv:
+            list_apps(service, dry_run)
+
+        # Check if backfill is enabled.
+        if len(sys.argv) > 1 and ('--backfill=true' in sys.argv or '--backfill=custom' in sys.argv):
+            backfill = True
+        
+        if "START_DATE" in os.environ:
+            start_date_year, start_date_month, start_date_day = os.environ.get('START_DATE').split('-')
+        if len(sys.argv) > 1 and '--backfill=custom' in sys.argv:
+            end_date_year, end_date_month, end_date_day = os.environ.get('END_DATE').split('-')
+        
+        # Check if the start date is after the end date.
+        if end_date_year:
+            start_date = date(int(start_date_year), int(start_date_month), int(start_date_day))
+            end_date = date(int(end_date_year), int(end_date_month), int(end_date_day))
+            if start_date > end_date:
+                raise ValueError("Start date must be before end date.")
+        
+        # Generate the network report.
+        generate_network_report(service, backfill, dry_run, start_date_year, start_date_month, start_date_day, end_date_year, end_date_month, end_date_day)

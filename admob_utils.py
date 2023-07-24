@@ -37,11 +37,6 @@ API_NAME = "admob"
 API_VERSION = "v1"
 API_SCOPE = "https://www.googleapis.com/auth/admob.readonly"
 
-# Store refresh tokens in a local disk file. This file contains sensitive
-# authorization information.
-PUBLISHER_ID = os.environ.get('PUBLISHER_ID')
-TOKEN_FILE = f"token {PUBLISHER_ID}.pickle"
-
 
 def load_user_credentials():
   # Name of a file containing the OAuth 2.0 information for this
@@ -52,19 +47,22 @@ def load_user_credentials():
 
 
 # Authenticate user and create AdMob Service Object.
-def authenticate():
+def authenticate(token_f):
   """Authenticates a user and creates an AdMob Service Object.
+
+  Args:
+        token_f: name of the token file.
 
   Returns:
     An AdMob Service Object that is authenticated with the user using either
     a client_secrets file or previously stored access and refresh tokens.
   """
 
-  # The TOKEN_FILE stores the user's access and refresh tokens, and is
+  # The token_f stores the user's access and refresh tokens, and is
   # created automatically when the authorization flow completes for the first
   # time.
-  if os.path.exists(TOKEN_FILE):
-    with open(TOKEN_FILE, 'rb') as token:
+  if os.path.exists(token_f):
+    with open(token_f, 'rb') as token:
       credentials = pickle.load(token)
 
     if credentials and credentials.expired and credentials.refresh_token:
@@ -108,7 +106,8 @@ def authenticate():
 
     print(f"\nYour refresh token is: {refresh_token}\n")
 
-    # Save the credentials for the next run.
+    # Store refresh tokens in a local disk file for the next run. This file contains sensitive
+    # authorization information.
     with open("token.pickle", "wb") as token:
       pickle.dump(credentials, token)
 
@@ -185,3 +184,35 @@ def _parse_raw_query_params(data):
   # Convert pairs to a dict to make it easy to access the values
   return {key: val for key, val in pairs}
   # [END main_body]
+
+
+def list_files_with_prefix(prefix):
+  """Lists all files in the current directory with the same prefix.
+
+  Args:
+    prefix: The prefix of the files to list.
+
+  Returns:
+    A list of the files in the current directory with the given prefix.
+  """
+
+  files = os.listdir()
+  filtered_files = [
+      file for file in files if file.startswith(prefix)
+  ]
+  return filtered_files
+
+
+def extract_publisher_id(filename):
+  """Extracts the publisher id from a token filename.
+
+  Args:
+    filename: The filename of the token file to extract the publisher id from.
+
+  Returns:
+    The publisher id.
+  """
+
+  token_name = filename.split(".")[0]
+  publisher_id = token_name.replace("token ", "")
+  return publisher_id
