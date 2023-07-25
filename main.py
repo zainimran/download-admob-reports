@@ -29,6 +29,12 @@ import os
 
 
 PUBLISHER_ID = os.environ.get('PUBLISHER_ID')
+TOKEN_NUMBER = 0
+TOTAL_TOKENS = 0
+
+
+def custom_logging(message):
+    print(f'Token # {TOKEN_NUMBER}/{TOTAL_TOKENS} - {message}')
 
 
 def list_apps(service, dry_run=False):
@@ -37,7 +43,7 @@ def list_apps(service, dry_run=False):
     Args:
         service: An AdMob Service Object.
     """
-    print('Generating apps list for ', PUBLISHER_ID)
+    custom_logging('Generating apps list for ', PUBLISHER_ID)
 
     data = []
     next_page_token = ''
@@ -75,9 +81,9 @@ def list_apps(service, dry_run=False):
             json_string = json.dumps(data)
             with open(f'apps_list {PUBLISHER_ID}.json', 'w') as outfile:
                 outfile.write(json_string)
-            print("dry run complete (local machine) \n")
+            custom_logging("dry run complete (local machine) \n")
         except Exception:
-            print("dry run complete (cloud function) \n")
+            custom_logging("dry run complete (cloud function) \n")
     else:
         client = bigquery.Client(project=os.environ.get('GCP_PROJECT'))
 
@@ -94,9 +100,9 @@ def list_apps(service, dry_run=False):
         if not dataset_exists:
             # The dataset does not exist, so create it
             dataset = client.create_dataset(dataset_id)
-            print(f"Dataset {dataset.dataset_id} created.")
+            custom_logging(f"Dataset {dataset.dataset_id} created.")
         else:
-            print(f"Dataset {dataset_id} already exists.")
+            custom_logging(f"Dataset {dataset_id} already exists.")
 
         table_id = f"{os.environ.get('GCP_PROJECT')}.{dataset_id}.list_apps"
 
@@ -112,9 +118,9 @@ def list_apps(service, dry_run=False):
         if not table_exists:
             table = bigquery.Table(table_id)
             table = client.create_table(table)
-            print(f"Table {table.table_id} created.")
+            custom_logging(f"Table {table.table_id} created.")
         else:
-            print(f"Table {table_id} already exists.")
+            custom_logging(f"Table {table_id} already exists.")
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True, write_disposition=bigquery.WriteDisposition.WRITE_APPEND)
@@ -125,7 +131,7 @@ def list_apps(service, dry_run=False):
         job.result()  # Waits for the job to complete.
 
         table = client.get_table(table_id)  # Make an API request.
-        print(
+        custom_logging(
             "{} rows and {} columns in {}".format(
                 table.num_rows, len(table.schema), table_id
             )
@@ -151,7 +157,7 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
     # "America/Los_Angeles", see
     # https://developers.google.com/admob/api/v1/reference/rest/v1/accounts.networkReport/generate
     # for more information.
-    print('Generating network report for ', PUBLISHER_ID)
+    custom_logging(f'Generating network report for {PUBLISHER_ID}')
 
     tz = pytz.timezone('America/Los_Angeles')
     datetime_now = datetime.now(tz)
@@ -170,6 +176,13 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
 
     data = []
 
+    if not dry_run:
+        dataset_id = "admob_reporting_data"
+        table_id = f"{os.environ.get('GCP_PROJECT')}.{dataset_id}.admob_network_report"
+        
+        # Construct a BigQuery client object.
+        client = bigquery.Client(project=os.environ.get('GCP_PROJECT'))
+
     if not backfill:
         end_date = datetime_now.date() - timedelta(days=1)
         date_range = {
@@ -177,7 +190,25 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             'end_date': {'year': end_date.year, 'month': end_date.month, 'day': end_date.day}
         }
 
-        print(date_range)
+        # Run a query to check if there are any rows in the table with the specified date value.
+        if not dry_run:
+            query = """
+                SELECT *
+                FROM `{}`
+                WHERE dimensionValues_DATE_value = '{}'
+                LIMIT 10
+            """.format(table_id, end_date.strftime("%Y-%m-%d"))
+
+            # Run the query and get the results.
+            job = client.query(query)
+            results = job.result()
+
+            # Check if the number of rows in the results is greater than 0.
+            if results.total_rows > 0:
+                custom_logging(f"There are already rows in the table with the specified date value: {end_date}")
+                exit()
+                
+        custom_logging(date_range)
 
         # Create network report specifications.
         report_spec = {
@@ -197,7 +228,7 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             parent='accounts/{}'.format(PUBLISHER_ID), body=request).execute()
         
         if 'matchingRowCount' not in response[-1]['footer']:
-            print('Warning: This account does not contain any records for this dates \n')
+            custom_logging('Warning: This account does not contain any records for this dates \n')
             return
 
         num_rows = int(response[-1]['footer']['matchingRowCount'])
@@ -222,6 +253,24 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             'start_date': {'year': start_date.year, 'month': start_date.month, 'day': start_date.day},
             'end_date': {'year': end_date.year, 'month': end_date.month, 'day': end_date.day}
         }
+
+        # Run a query to check if there are any rows in the table with the specified date value.
+        if not dry_run:
+            query = """
+                SELECT *
+                FROM `{}`
+                WHERE dimensionValues_DATE_value BETWEEN '{}' and '{}'
+                LIMIT 10
+            """.format(table_id, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
+
+            # Run the query and get the results.
+            job = client.query(query)
+            results = job.result()
+
+            # Check if the number of rows in the results is greater than 0.
+            if results.total_rows > 0:
+                custom_logging(f"There are already rows in the table within the specified start and end date range: {start_date} - {end_date}")
+                exit()
 
         left, right = 1, (end_date - start_date).days + 1
         while left <= right:
@@ -249,7 +298,7 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
                 parent='accounts/{}'.format(PUBLISHER_ID), body=request).execute()
 
             if 'matchingRowCount' not in response[-1]['footer']:
-                print('Warning: This account does not contain any records for this dates \n')
+                custom_logging('Warning: This account does not contain any records for this dates \n')
                 return
             
             # If the total number of records in the response is less than 80k (record retrieval limit is 100k), try a larger batch size; otherwise, try a smaller batch size
@@ -261,22 +310,24 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
 
         # The optimal batch size is the largest batch size that returns less than 80k rows 
         batch_size = right
-        print('batch_size in days: ', batch_size)
+        custom_logging(f'batch_size in days: {batch_size}')
 
         # Loop through each batch of data, adjusting the date range as needed
         offset = 0
+        batch_count = 0
         while True:
             # Calculate the start and end dates for the current batch
             batch_start_date = start_date + timedelta(days=max(offset, 0))
             batch_end_date = min(batch_start_date + timedelta(days=batch_size - 1), end_date)
-            
+            batch_count += 1
+
             # Make the API request for the current batch
             date_range = {
                 'start_date': {'year': batch_start_date.year, 'month': batch_start_date.month, 'day': batch_start_date.day},
                 'end_date': {'year': batch_end_date.year, 'month': batch_end_date.month, 'day': batch_end_date.day}
             }
 
-            print(date_range)
+            custom_logging(f'batch #: {batch_count} - {date_range}')
 
             # Create network report specifications.
             report_spec = {
@@ -295,11 +346,11 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
 
 
             num_rows = int(response[-1]['footer']['matchingRowCount'])
-            print('batch num_rows: ', num_rows)
+            custom_logging(f'batch num_rows: {num_rows}')
             if num_rows > 100000:
                 logging.warning('Report not fully retrieved from the AdMob API due to number of rows in response exceeding 100k')
                 batch_size -= 2 # decrease batch size aggresively until we don't hit the record retrieval limit on the API
-                print('new batch_size in days: ', batch_size)
+                custom_logging(f'new batch_size in days: {batch_size}')
                 continue
 
             # Append the data from the current batch to the overall data list
@@ -338,15 +389,10 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             json_string = json.dumps(data)
             with open(f'admob_reports {PUBLISHER_ID}.json', 'w') as outfile:
                 outfile.write(json_string)
-            print("dry run complete (local machine) \n")
+            custom_logging("dry run complete (local machine) \n")
         except Exception:
-            print("dry run complete (cloud function) \n")
+            custom_logging("dry run complete (cloud function) \n")
     else:
-        # Construct a BigQuery client object.
-        client = bigquery.Client(project=os.environ.get('GCP_PROJECT'))
-
-        dataset_id = "admob_reporting_data"
-
         # Check if the dataset already exists
         dataset_exists = False
         try:
@@ -358,11 +404,9 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
         if not dataset_exists:
             # The dataset does not exist, so create it
             dataset = client.create_dataset(dataset_id)
-            print(f"Dataset {dataset.dataset_id} created.")
+            custom_logging(f"Dataset {dataset.dataset_id} created.")
         else:
-            print(f"Dataset {dataset_id} already exists.")
-
-        table_id = f"{os.environ.get('GCP_PROJECT')}.{dataset_id}.admob_network_report"
+            custom_logging(f"Dataset {dataset_id} already exists.")
 
         # Check if table exists
         table_exists = False
@@ -392,9 +436,9 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             # Enable "require where clause to query data"
             table.require_partition_filter = True
             table.clustering_fields = ["dimensionValues_APP_value", "dimensionValues_COUNTRY_value"]
-            print(f"Table {table.table_id} created.")
+            custom_logging(f"Table {table.table_id} created.")
         else:
-            print(f"Table {table_id} already exists.")
+            custom_logging(f"Table {table_id} already exists.")
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True, write_disposition=bigquery.WriteDisposition.WRITE_APPEND)
@@ -404,15 +448,15 @@ def generate_network_report(service, backfill=False, dry_run=False, start_date_y
             try:
                 job = client.load_table_from_json(
                     data, table_id, job_config=job_config)
-                print('job id: ', job.job_id)
+                custom_logging(f'job id: {job.job_id}')
                 job.result()  # Waits for the job to complete.
                 break
             except Exception as e:
-                print(f"Error loading job: {e}")
+                custom_logging(f"Error loading job: {e}")
                 time.sleep(10 * (2 ** i)) # retry delay = 10
 
         table = client.get_table(table_id)  # Make an API request.
-        print(
+        custom_logging(
             "{} rows and {} columns in {} \n".format(
                 table.num_rows, len(table.schema), table_id
             )
@@ -446,9 +490,16 @@ Raises:
 @functions_framework.cloud_event
 def admob_report_main(cloud_event):
     token_files = admob_utils.list_files_with_prefix('token')
-    for token_f in token_files:
+    global TOTAL_TOKENS
+    TOTAL_TOKENS = len(token_files)
+    
+    for token_num, token_f in enumerate(token_files):
         global PUBLISHER_ID
         PUBLISHER_ID = admob_utils.extract_publisher_id(token_f)
+
+        global TOKEN_NUMBER
+        TOKEN_NUMBER = token_num + 1
+
         service = admob_utils.authenticate(token_f)
         pub_id = None
         backfill = False
@@ -479,8 +530,11 @@ def admob_report_main(cloud_event):
                 end_date_year, end_date_month, end_date_day = attr_dic["end_date"].split('-')
 
         # Check if the publisher ID in the Cloud Event matches the current publisher ID.
-        if pub_id and pub_id != PUBLISHER_ID:
-            return
+        if pub_id:
+            TOTAL_TOKENS = 1
+            TOKEN_NUMBER = 1
+            if pub_id != PUBLISHER_ID:
+                return
 
         # Check if backfill is enabled.
         if backfill == 'True' or backfill == 'true' or backfill == 'TRUE':
@@ -530,12 +584,18 @@ Command line flags:
 """
 if __name__ == "__main__":
     token_files = admob_utils.list_files_with_prefix('token')
-    for token_f in token_files:
+    TOTAL_TOKENS = len(token_files)
+
+    for token_num, token_f in enumerate(token_files):
         PUBLISHER_ID = admob_utils.extract_publisher_id(token_f)
-        
-        # if there is a pub id passed in the command line and that pub id doesn't match the loop's current pub id, then skip that loop instance
-        if len(sys.argv) > 1 and 'pub' in sys.argv[1] and sys.argv[1] != PUBLISHER_ID:
-            continue
+        TOKEN_NUMBER = token_num + 1
+
+        # if there is a pub id declared as an env variable and that pub id doesn't match the loop's current pub id, then skip that loop instance
+        if 'PUB_ID' in os.environ:
+            TOTAL_TOKENS = 1
+            TOKEN_NUMBER = 1
+            if os.environ.get('PUB_ID') != PUBLISHER_ID:
+                continue
 
         service = admob_utils.authenticate(token_f)
         backfill = False
@@ -563,9 +623,9 @@ if __name__ == "__main__":
         if len(sys.argv) > 1 and ('--backfill=true' in sys.argv or '--backfill=custom' in sys.argv):
             backfill = True
         
-        if "START_DATE" in os.environ:
+        if 'START_DATE' in os.environ:
             start_date_year, start_date_month, start_date_day = os.environ.get('START_DATE').split('-')
-        if len(sys.argv) > 1 and '--backfill=custom' in sys.argv:
+        if len(sys.argv) > 1 and '--backfill=custom' in sys.argv and 'END_DATE' in os.environ:
             end_date_year, end_date_month, end_date_day = os.environ.get('END_DATE').split('-')
         
         # Check if the start date is after the end date.
