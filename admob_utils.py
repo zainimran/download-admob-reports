@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2023 Google LLC
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ def load_user_credentials():
 
 
 # Authenticate user and create AdMob Service Object.
-def authenticate(token_f):
+def authenticate(token_f=''):
   """Authenticates a user and creates an AdMob Service Object.
 
   Args:
